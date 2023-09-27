@@ -1,0 +1,4 @@
+MachineName,TotalMemory,TotalCPUs,TotalGPUs
+computeNode1,8,4,0
+bigMemNode1,24,2,0
+gpuNode1,8,2,1

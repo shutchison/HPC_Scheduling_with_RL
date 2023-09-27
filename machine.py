@@ -43,6 +43,26 @@ class Machine():
         assert(self.avail_cpus >= 0)
         assert(self.avail_mem >= 0)
         assert(self.avail_gpus >= 0)
+        
+    def get_util(self):
+    # Returns the average utilization of this machine over the logged time period
+        if len(self.avail_cpus_at_times) == 0:
+            return 0
+        mem_perc = [1 - mem/self.total_mem for mem in self.avail_mem_at_times]
+        cpu_perc = [1 - cpu/self.total_cpus for cpu in self.avail_cpus_at_times]
+        
+        if self.total_gpus != 0:
+            gpu_perc = [1 - gpu/self.total_gpus for gpu in self.avail_gpus_at_times]
+            
+        else:
+            gpu_perc = [0 for _ in self.avail_gpus_at_times]
+        
+        mem_avg = sum(mem_perc)/len(mem_perc)
+        cpu_avg = sum(cpu_perc)/len(cpu_perc)
+        gpu_avg = sum(gpu_perc)/len(gpu_perc)
+        
+        return (mem_avg + cpu_avg + gpu_avg)/3
+
 
     def stop_job(self, job_name:str):
         # remove a job and free up the resources it was using
@@ -67,10 +87,10 @@ class Machine():
     def plot_usage(self, model_type):
         fig = plt.figure(figsize=[12,10])
         fig.suptitle("Utilization for {}".format(self.node_name))
-        mem_perc = [mem/self.total_mem for mem in self.avail_mem_at_times]
-        cpu_perc = [cpu/self.total_cpus for cpu in self.avail_cpus_at_times]
+        mem_perc = [1 - mem/self.total_mem for mem in self.avail_mem_at_times]
+        cpu_perc = [1 - cpu/self.total_cpus for cpu in self.avail_cpus_at_times]
         if self.total_gpus != 0:
-            gpu_perc = [mem/self.total_gpus for mem in self.avail_gpus_at_times]
+            gpu_perc = [1 - mem/self.total_gpus for mem in self.avail_gpus_at_times]
         else:
             gpu_perc = [0 for _ in self.avail_gpus_at_times]
         ticks = [datetime.fromtimestamp(t) for t in self.tick_times]
@@ -93,8 +113,9 @@ class Machine():
         
         plt.xlabel("time")
         plt.ylabel("Percentage utilized")
-        plt.savefig("plots/{}_{}.jpg".format(self.node_name, model_type), bbox_inches="tight")
+        plt.savefig("plots/{}_{}.jpg".format(model_type, self.node_name), bbox_inches="tight")
         plt.close(fig)
+        
     def __repr__(self):
         s = "Machine("
         for key, value in self.__dict__.items():

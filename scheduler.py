@@ -5,6 +5,7 @@ from job import Job
 from datetime import datetime
 import csv
 import logging
+import matplotlib.pyplot as plt
 
 class Scheduler():
     def __init__(self, model_type:str) -> None: # what scheduling method to use
@@ -17,6 +18,7 @@ class Scheduler():
         self.job_queue = []
         self.running_jobs = queue.PriorityQueue() # ordered based on end time
         self.completed_jobs = []
+        self.failed_jobs = []
     
         logging.basicConfig(filename="output_files/simulation.log", level="DEBUG")
         self.logger = logging.getLogger("Scheduling")
@@ -36,8 +38,13 @@ class Scheduler():
                 break
         end_time = datetime.now()
         print("Simulation complete.  Simulation time: {}".format(end_time-start_time))
-        aqt = self.calculate_metrics()
-        print("Avg. Queue Time was {}".format(aqt))
+        avg_queue_time, avg_cluster_util = self.calculate_metrics()
+        print("Avg. Queue Time was {:,.2f} seconds".format(avg_queue_time))
+        print("Avg. Clutser Util was {:,.2f}%".format(avg_cluster_util * 100))
+        
+        for m in self.machines:
+            m.plot_usage(self.model_type)
+        self.plot_clutser_usage()
         
     def machines_log_status(self):
         for m in self.machines:
@@ -175,28 +182,8 @@ class Scheduler():
                     if found:
                         break
 
-        # Depending on scheduling algorithm, sort by job duration
-        if self.model_type == "sjf":
-            self.job_queue.sort(key=lambda x: x.req_duration) # sjf = shortest job first by requested duration
-        if self.model_type == "oracle":
-            self.job_queue.sort(key=lambda x: x.actual_duration) # oracle = shortest job first with knowledge of actual duration
-        
-        # Try to schedule any jobs which can now be run
-        none_can_be_scheduled = False
-        while not none_can_be_scheduled:
-            any_scheduled = False
-            for index, job in enumerate(self.job_queue):
-                scheduled, machine = self.schedule(job)
-                if scheduled:
-                    self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
-                    any_scheduled = True
-                    self.running_jobs.put( (job.end_time, job) )
-                    self.job_queue = self.job_queue[:index] + self.job_queue[index+1:]
-                    self.log_training_data_csv(job, self.machines, machine, "Start")
-                    self.machines_log_status()
-                    break
-            if not any_scheduled:
-                none_can_be_scheduled = True
+        # Try to schedule any jobs which can now be run according to the proscribed algorithm
+        self.schedule()
 
         # update global clock to be the next submisison or ending event
         if self.future_jobs.empty() and self.running_jobs.empty():
@@ -216,32 +203,160 @@ class Scheduler():
             print("Something has gone wrong updating the global clock.")
             return False
 
-        if len(self.completed_jobs) % 1000 == 0:
-            print(f"{len(self.completed_jobs)}/{self.num_total_jobs} jobs completed")
-            print(f"Current queue depth is {len(self.job_queue)}")
+        # Print status information to ensure progress happening
+        #if len(self.completed_jobs) % 1000 == 0:
+        #    print(f"{len(self.completed_jobs)}/{self.num_total_jobs} jobs completed")
+        #    print(f"Current queue depth is {len(self.job_queue)}")
 
         return True
         
-    def schedule(self, job):
-        if self.model_type == "ppg":
-            return self.PPG(job) #TODO: load this saved model upon object creation
+    def schedule(self):
+        # schedule will use the specified scheduling algorithm (set by self.model_type)
+        # and will schedule as many jobs as is currently possible using the proscribed algorithm
+        # to schedule as many jobs as possible from the job queue and available machine resources.
 
-        elif self.model_type == "ddpg":
-            return self.DDPG(job) #TODO: load this saved model upon object creation
+        if self.model_type == "sjf":
+            self.job_queue.sort(key=lambda x: x.req_duration) # sjf = shortest job first by requested duration
 
-        elif self.model_type == "sjf":
-            return self.shortest_job_first(job)
+            none_can_be_scheduled = False
+            while not none_can_be_scheduled:
+                any_scheduled = False
+                for index, job in enumerate(self.job_queue):
+                    # scheduled, machine = self.shortest_job_first(job)
 
-        elif self.model_type == "bbf":
-            return self.best_bin_first(job)
+                    assigned_machine = None
+                    for m in self.machines:
+                        if (m.avail_mem >= job.req_mem) and (m.avail_cpus >= job.req_cpus) and (m.avail_gpus >= job.req_gpus):
+                            assigned_machine = m
+                            break
+                    if assigned_machine is not None:
+                        self.set_job_time(job)
+                        assigned_machine.start_job(job)
+
+                        self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+                        any_scheduled = True
+                        self.running_jobs.put( (job.end_time, job) )
+                        self.job_queue = self.job_queue[:index] + self.job_queue[index+1:]
+                        self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+                        self.machines_log_status()
+                        break
+                if not any_scheduled:
+                    none_can_be_scheduled = True
+
+        elif self.model_type == "fcfs":
+            # Schedule the first job in the queue until the first job in the queue can not be 
+            # scheduled, or the queue is empty.
+            while True:
+                if len(self.job_queue) == 0:
+                    return
+                job = self.job_queue[0]
+                assigned_machine = None
+                for m in self.machines:
+                    if (m.avail_mem >= job.req_mem) and (m.avail_cpus >= job.req_cpus) and (m.avail_gpus >= job.req_gpus):
+                        assigned_machine = m
+                        break  
+
+                if assigned_machine is not None:
+                    self.set_job_time(job)
+                    assigned_machine.start_job(job)
+
+                    self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+                    any_scheduled = True
+                    self.running_jobs.put( (job.end_time, job) )
+                    self.job_queue = self.job_queue[1:]
+                    self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+                    self.machines_log_status()
+                else:
+                    # Need a check in here if a job is un-runnable on any HPC machine, or we will fail to terminate
+                    can_run_on_any_machine = False
+                    for m in self.machines:
+                        if (m.total_mem >= job.req_mem) and (m.total_cpus >= job.req_cpus) and (m.total_gpus >= job.req_gpus):
+                            can_run_on_any_machine = True
+                            break
+                    if not can_run_on_any_machine:
+                        self.job_queue = self.job_queue[1:]
+                        self.failed_jobs.append(job)
+                        self.logger.info("{} is unrunnable on any machine in the cluster".format(job.job_name, self.global_clock))
+                        continue
+                    break
+        elif self.model_type == "bfbp":
+            # Find the (job, machine) pairing which will result in the "fullest" machine, then start executing that job on that machine
+            # Do this until there are no jobs left in the queue, or no more jobs will fit on any machine
+            while True:
+                if len(self.job_queue) == 0:
+                    return
+                        
+                min_fill_margin = 10
+                assigned_machine = None
+                best_job_index = None
+
+                for job_index, job in enumerate(self.job_queue):
+                    for m in self.machines:
+                        # Check if this machine has enough reosources for this jobs.  If not, check the next machine
+                        if (m.avail_mem < job.req_mem) or (m.avail_cpus < job.req_cpus) or (m.avail_gpus < job.req_gpus):
+                            continue
+
+                        # not all nodes have both GPUs and CPUs, so init each margin to 0
+                        mem_margin = 0.0
+                        cpu_margin = 0.0
+                        gpu_margin = 0.0
+
+                        # count how many attributes the node has to normalize the final margin
+                        n_attributes = 0
+
+                        if m.total_mem > 0:
+                            mem_margin = (m.avail_mem - job.req_mem)/m.total_mem
+                            n_attributes += 1
+
+                        if m.total_cpus > 0:
+                            cpu_margin = (m.avail_cpus - job.req_cpus)/m.total_cpus
+                            n_attributes += 1
+
+                        if m.total_gpus > 0:
+                            gpu_margin = (m.avail_gpus - job.req_gpus)/m.total_gpus
+                            n_attributes += 1
+
+                        if n_attributes == 0:
+                            print("{} has no virtual resources configured (all <= 0).".format(m.node_name))
+                            fill_margin = 10
+                        else:
+                            fill_margin = (mem_margin + cpu_margin + gpu_margin)/n_attributes
+                        
+                        # This (job, machine) combo results in a machine with the fewest resources left than we've found so far
+                        if fill_margin < min_fill_margin:
+                            min_fill_margin = fill_margin
+                            assigned_machine = m
+                            best_job_index = job_index
+
+                # Start running the best job on the best machine
+                if assigned_machine is not None and best_job_index is not None:
+                    job = self.job_queue[best_job_index]
+                    self.set_job_time(job)
+                    assigned_machine.start_job(job)
+
+                    self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+                    self.running_jobs.put( (job.end_time, job) )
+                    self.job_queue = self.job_queue[:best_job_index] + self.job_queue[best_job_index+1:]
+                    self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+                    self.machines_log_status()
+
+                # No machine can run any job
+                if min_fill_margin == 10:
+                    return
+
 
         elif self.model_type == "oracle":
-            return self.shortest_job_first(job)
+            return self.shortest_job_first()
 
         else:
             # default bin packing procedure best bin first
-            return self.best_bin_first(job)
+            return self.best_bin_first()
 
+    def first_come_first_serve(self):
+        pass
+
+    def best_fit_bin_packing(self):
+        pass
 
     def shortest_job_first(self, job):
         # jobs are sorted by ascending duration before being handed to this function
@@ -301,32 +416,87 @@ class Scheduler():
         else:
             return False, None
 
-    def PPG(self, job):
-        return False, None
-        # call self.PPG.predict (or whatever the API says to do) to decide where to schedule this job
-        # recall we have three contraints to satisfy: machine must have adequate memory, cpus, and gpus for this job
-        # call self.set_job_time to record its time span
-        # call machine.start_job to start the job running
-
-    def DDPG(self, job):
-        return False, None
-        # call self.DDPG.predict (or whatever the API says to do) to decide where to schedule this job
-        # recall we have three contraints to satisfy: machine must have adequate memory, cpus, and gpus for this job
-        # call self.set_job_time to record its time span
-        # call machine.start_job to start the job running
-
     def set_job_time(self, job):
         job.start_time = self.global_clock
         job.end_time = self.global_clock + job.actual_duration
 
     def calculate_metrics(self) -> float:
+        #returns a tuple (avg_queue_time, avg_clutser_util)
+    
         # iterate through self.completed_jobs and compute the avg queue time for all jobs which have been compelted
         queue_sum = sum([job.start_time-job.submission_time for job in self.completed_jobs])
         if len(self.completed_jobs) != 0:
-            return queue_sum/len(self.completed_jobs)
+            avg_queue_time = queue_sum/len(self.completed_jobs)
         else:
-            print("There are no completed jobs!")
-            return 3.1415
+            raise ValueError("There are no completed jobs!")
+            
+        utils = []
+        for m in self.machines:
+            utils.append(m.get_util())
+        avg_cluster_util = sum(utils)/len(utils)
+        
+        return (avg_queue_time, avg_cluster_util)
+
+    def plot_clutser_usage(self):
+        cluster_mem  = 0
+        cluster_cpus = 0
+        cluster_gpus = 0
+
+        for m in self.machines:
+            cluster_mem  += m.total_mem
+            cluster_cpus += m.total_cpus 
+            cluster_gpus += m.total_gpus
+
+        cluster_avail_mem  = []
+        cluster_avail_cpus = []
+        cluster_avail_gpus = []
+        
+        for i in range(len(self.machines[0].avail_cpus_at_times)):
+            current_time_avail_mem = 0
+            current_time_avail_cpus = 0
+            current_time_avail_gpus = 0
+            
+            for m in self.machines:
+                current_time_avail_mem  += m.avail_mem_at_times[i]
+                current_time_avail_cpus += m.avail_cpus_at_times[i]
+                current_time_avail_gpus += m.avail_gpus_at_times[i]
+            
+            cluster_avail_mem.append(current_time_avail_mem)
+            cluster_avail_cpus.append(current_time_avail_cpus)
+            cluster_avail_gpus.append(current_time_avail_gpus)
+        
+        tick_times = self.machines[0].tick_times
+        
+        fig = plt.figure(figsize=[12,10])
+        fig.suptitle(f"Cluster Utilization ({self.model_type})")
+        mem_perc = [1 - mem/cluster_mem for mem in cluster_avail_mem]
+        cpu_perc = [1- cpu/cluster_cpus for cpu in cluster_avail_cpus]
+        if cluster_gpus != 0:
+            gpu_perc = [1 - gpu/cluster_gpus for gpu in cluster_avail_gpus]
+        else:
+            gpu_perc = [0 for _ in cluster_avail_gpus]
+        ticks = [datetime.fromtimestamp(t) for t in tick_times]
+        
+        plt.plot(ticks,
+                 mem_perc, 
+                 color="red", 
+                 label="Memory Utilization")
+
+        plt.plot(ticks, 
+                 gpu_perc, 
+                 color="blue", 
+                 label="GPU Utilization")
+
+        plt.plot(ticks, 
+                cpu_perc, 
+                color="green", 
+                label="CPU Utilization")
+        plt.legend()
+        
+        plt.xlabel("time")
+        plt.ylabel("Percentage utilized")
+        plt.savefig("plots/{}_Cluster.jpg".format(self.model_type), bbox_inches="tight")
+        plt.close(fig)
 
     def __repr__(self):
         s = "Scheduler("

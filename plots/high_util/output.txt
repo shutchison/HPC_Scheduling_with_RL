@@ -1,0 +1,24 @@
+========================================
+8 machines loaded from ./data/machines.csv
+28072 jobs loaded from ./data/high_util.csv
+Model is: fcfs
+No future jobs and no running jobs!
+Simulation complete.  Simulation time: 0:00:28.843999
+Avg. Queue Time was 1,297,666.51 seconds
+Avg. Clutser Util was 48.47%
+========================================
+8 machines loaded from ./data/machines.csv
+28072 jobs loaded from ./data/high_util.csv
+Model is: sjf
+No future jobs and no running jobs!
+Simulation complete.  Simulation time: 0:04:15.606933
+Avg. Queue Time was 143,809.09 seconds
+Avg. Clutser Util was 55.21%
+========================================
+8 machines loaded from ./data/machines.csv
+28072 jobs loaded from ./data/high_util.csv
+Model is: bfbp
+No future jobs and no running jobs!
+Simulation complete.  Simulation time: 0:07:33.149645
+Avg. Queue Time was 276,592.69 seconds
+Avg. Clutser Util was 57.03%
