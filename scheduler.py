@@ -19,15 +19,15 @@ class Scheduler():
         self.running_jobs = queue.PriorityQueue() # ordered based on end time
         self.completed_jobs = []
         self.failed_jobs = []
-    
+
         logging.basicConfig(filename="output_files/simulation.log", level="DEBUG")
         self.logger = logging.getLogger("Scheduling")
-        
+
         self.csv_outfile_name = "output_files/test.csv"
         self.header_written = False
 
         self.num_total_jobs = 0
-        
+
     def conduct_simulation(self, machines_csv, jobs_csv):
         self.load_machines(machines_csv)
         self.load_jobs(jobs_csv)
@@ -41,19 +41,19 @@ class Scheduler():
         avg_queue_time, avg_cluster_util = self.calculate_metrics()
         print("Avg. Queue Time was {:,.2f} seconds".format(avg_queue_time))
         print("Avg. Clutser Util was {:,.2f}%".format(avg_cluster_util * 100))
-        
+
         for m in self.machines:
             m.plot_usage(self.model_type)
         self.plot_clutser_usage()
-        
+
     def machines_log_status(self):
         for m in self.machines:
             m.log_status(self.global_clock)
-    
+
     def machines_plot(self):
         for m in self.machines:
             m.plot_usage(self.model_type)
-    
+
     def reset(self, model_type:str):
         #chart_generation
         self.machines = []
@@ -64,9 +64,11 @@ class Scheduler():
         self.job_queue = []
         self.running_jobs = queue.PriorityQueue() # ordered based on end time
         self.completed_jobs = []
+        self.failed_jobs = []
 
+        self.header_written = False
         self.num_total_jobs = 0
-    
+
     def load_machines(self, csv_file_name):
         f = open(csv_file_name)
         lines = f.readlines()
@@ -78,7 +80,7 @@ class Scheduler():
             elements = line.split(",")
             self.machines.append(Machine(elements[0], *map(int, elements[1:])))
         print(f"{len(self.machines)} machines loaded from {csv_file_name}")
-    
+
     def load_jobs(self, csv_file_name):
         f = open(csv_file_name)
         lines = f.readlines()
@@ -120,7 +122,7 @@ class Scheduler():
             machine_data.append(m.avail_gpus)
 
             ctr = ctr+1
-        
+
         job_data = []
         job_data.append(job.req_mem)
         job_data.append(job.req_cpus)
@@ -138,10 +140,11 @@ class Scheduler():
             f.write(",".join(headers) + "\n")
             f.close()
             self.header_written = True
-        
+
         with open(self.csv_outfile_name, 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow([self.global_clock, job.job_name, action] + [assignment] + job_data + machine_data)
+
 
     def tick(self):
         # iterate through self.future_jobs to find all jobs with job.submission_time == self.global_clock
@@ -183,6 +186,7 @@ class Scheduler():
                         break
 
         # Try to schedule any jobs which can now be run according to the proscribed algorithm
+        # This will do nothing if the model_type is "machine_learning"
         self.schedule()
 
         # update global clock to be the next submisison or ending event
@@ -196,7 +200,7 @@ class Scheduler():
             first_submit = self.future_jobs.queue[0][0]
         if not self.running_jobs.empty():
             first_end = self.running_jobs.queue[0][0]
-        
+
         self.global_clock = min(first_submit, first_end)
 
         if self.global_clock == 1e100:
@@ -209,7 +213,7 @@ class Scheduler():
         #    print(f"Current queue depth is {len(self.job_queue)}")
 
         return True
-        
+
     def schedule(self):
         # schedule will use the specified scheduling algorithm (set by self.model_type)
         # and will schedule as many jobs as is currently possible using the proscribed algorithm
@@ -254,7 +258,7 @@ class Scheduler():
                 for m in self.machines:
                     if (m.avail_mem >= job.req_mem) and (m.avail_cpus >= job.req_cpus) and (m.avail_gpus >= job.req_gpus):
                         assigned_machine = m
-                        break  
+                        break
 
                 if assigned_machine is not None:
                     self.set_job_time(job)
@@ -285,7 +289,7 @@ class Scheduler():
             while True:
                 if len(self.job_queue) == 0:
                     return
-                        
+
                 min_fill_margin = 10
                 assigned_machine = None
                 best_job_index = None
@@ -321,7 +325,7 @@ class Scheduler():
                             fill_margin = 10
                         else:
                             fill_margin = (mem_margin + cpu_margin + gpu_margin)/n_attributes
-                        
+
                         # This (job, machine) combo results in a machine with the fewest resources left than we've found so far
                         if fill_margin < min_fill_margin:
                             min_fill_margin = fill_margin
@@ -344,77 +348,89 @@ class Scheduler():
                 if min_fill_margin == 10:
                     return
 
+        elif self.model_type == "machine_learning":
+            return
 
         elif self.model_type == "oracle":
-            return self.shortest_job_first()
+            return
 
         else:
-            # default bin packing procedure best bin first
-            return self.best_bin_first()
+            print(f"Invalid model_type: {self.model_type}")
+            return
 
-    def first_come_first_serve(self):
-        pass
+    def rl_schedule(self, action):
+        # Advance time until a scheduling deciison can be made, or perform the 
+        # action should be (job_queue_index, machine_index)
+        # will assign the job at index job_queue_index to the machine at
+        # machine_index
+        more_to_do = self.rl_tick()
+        if not more_to_do:
+            return False
 
-    def best_fit_bin_packing(self):
-        pass
+        job_index, machine_index = action
+        # Confirm this is a valid job index and machine index
+        if job_index > len(self.job_queue) or machine_index > len(self.machines):
+            print(f"Action {action} appears to be invalid.")
+            print(f"{len(self.job_queue)} jobs in the queue.")
+            print(f"{len(self.machines)} machines in the cluster")
+            more_to_do = True
+            return more_to_do
 
-    def shortest_job_first(self, job):
-        # jobs are sorted by ascending duration before being handed to this function
-        assigned_machine = None
-        for m in self.machines:
-            if (m.avail_mem >= job.req_mem) and (m.avail_cpus >= job.req_cpus) and (m.avail_gpus >= job.req_gpus):
-                assigned_machine = m
-                break
-        if assigned_machine is not None:
-            self.set_job_time(job)
-            assigned_machine.start_job(job)
-            return True, m.node_name
-        else:
-            return False, None
-        
+        job = self.job_queue[job_index]
+        assigned_machine = self.machines[machine_index]
 
-    def best_bin_first(self, job):
-        min_fill_margin = 10
-        assigned_machine = None
-        for m in self.machines:
-            if (m.avail_mem >= job.req_mem) and (m.avail_cpus >= job.req_cpus) and (m.avail_gpus >= job.req_gpus):
-                
-                # not all nodes have both GPUs and CPUs, so init each margin to 0
-                mem_margin = 0.0
-                cpu_margin = 0.0
-                gpu_margin = 0.0
+        # Confirm this machine can actually run this job.  If not, do nothing
+        if not machine.can_run(job):
+            more_to_do = True
+            return more_to_do
 
-                # count how many attributes the node has to normalize the final margin
-                n_attributes = 0
+        assigned_machine.start_job(job)
+        self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+        self.running_jobs.put( (job.end_time, job) )
+        self.job_queue = self.job_queue[:job_index] + self.job_queue[job_index+1:]
+        self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+        self.machines_log_status()
 
-                if m.total_mem > 0:
-                    mem_margin = (m.avail_mem - job.req_mem)/m.total_mem
-                    n_attributes += 1
+        # If there's a job that could run on any machine, we can make another
+        # scheudling decision, so we can make another scheduling decision at
+        # this time.  Return to let the RL agent decide what to do.
+        any_job_can_run = False
+        for job in self.job_queue:
+            for machine in self.machines:
+                if machine.can_run(job):
+                    any_job_can_run = True
+                    break
+            if any_job_can_run:
+                more_to_do = True
+                return more_to_do
 
-                if m.total_cpus > 0:
-                    cpu_margin = (m.avail_cpus - job.req_cpus)/m.total_cpus
-                    n_attributes += 1
+        # If there are no scheudling decisions that can be made, we need to
+        # advance time to allow more jobs to be submitted, or allow some jobs
+        # to finish.
+        more_to_do = self.rl_tick()
+        return more_to_do
 
-                if m.total_gpus > 0:
-                    gpu_margin = (m.avail_gpus - job.req_gpus)/m.total_gpus
-                    n_attributes += 1
 
-                if n_attributes == 0:
-                    print("{} has no virtual resources configured (all <= 0).".format(m.node_name))
-                    fill_margin = 10
-                else:
-                    fill_margin = (mem_margin + cpu_margin + gpu_margin)/n_attributes
+    # rl_tick will advance time until another scheudling action can occur, or
+    # the simulation ends.
+    # Returns True if there is more to do, False if the simulation has
+    # completed.
+    def rl_tick(self):
+        while True:
+            any_job_can_run = False
 
-                if fill_margin < min_fill_margin:
-                    min_fill_margin = fill_margin
-                    assigned_machine = m
-        
-        if assigned_machine is not None:
-            self.set_job_time(job)
-            assigned_machine.start_job(job)
-            return True, m.node_name
-        else:
-            return False, None
+            for job in self.job_queue:
+                for machine in self.machines:
+                    if machine.can_run(job):
+                        any_job_can_run = True
+                        break
+                if any_job_can_run:
+                    return True
+            # self.tick will no schedule any jobs if the model_type is set to
+            # "machine learning", but will advance time.
+            more_to_do = self.tick()
+            if not more_to_do:
+                return False
 
     def set_job_time(self, job):
         job.start_time = self.global_clock
@@ -422,19 +438,19 @@ class Scheduler():
 
     def calculate_metrics(self) -> float:
         #returns a tuple (avg_queue_time, avg_clutser_util)
-    
+
         # iterate through self.completed_jobs and compute the avg queue time for all jobs which have been compelted
         queue_sum = sum([job.start_time-job.submission_time for job in self.completed_jobs])
         if len(self.completed_jobs) != 0:
             avg_queue_time = queue_sum/len(self.completed_jobs)
         else:
             raise ValueError("There are no completed jobs!")
-            
+
         utils = []
         for m in self.machines:
             utils.append(m.get_util())
         avg_cluster_util = sum(utils)/len(utils)
-        
+
         return (avg_queue_time, avg_cluster_util)
 
     def plot_clutser_usage(self):
@@ -444,29 +460,29 @@ class Scheduler():
 
         for m in self.machines:
             cluster_mem  += m.total_mem
-            cluster_cpus += m.total_cpus 
+            cluster_cpus += m.total_cpus
             cluster_gpus += m.total_gpus
 
         cluster_avail_mem  = []
         cluster_avail_cpus = []
         cluster_avail_gpus = []
-        
+
         for i in range(len(self.machines[0].avail_cpus_at_times)):
             current_time_avail_mem = 0
             current_time_avail_cpus = 0
             current_time_avail_gpus = 0
-            
+
             for m in self.machines:
                 current_time_avail_mem  += m.avail_mem_at_times[i]
                 current_time_avail_cpus += m.avail_cpus_at_times[i]
                 current_time_avail_gpus += m.avail_gpus_at_times[i]
-            
+
             cluster_avail_mem.append(current_time_avail_mem)
             cluster_avail_cpus.append(current_time_avail_cpus)
             cluster_avail_gpus.append(current_time_avail_gpus)
-        
+
         tick_times = self.machines[0].tick_times
-        
+
         fig = plt.figure(figsize=[12,10])
         fig.suptitle(f"Cluster Utilization ({self.model_type})")
         mem_perc = [1 - mem/cluster_mem for mem in cluster_avail_mem]
@@ -476,23 +492,23 @@ class Scheduler():
         else:
             gpu_perc = [0 for _ in cluster_avail_gpus]
         ticks = [datetime.fromtimestamp(t) for t in tick_times]
-        
+
         plt.plot(ticks,
-                 mem_perc, 
-                 color="red", 
+                 mem_perc,
+                 color="red",
                  label="Memory Utilization")
 
-        plt.plot(ticks, 
-                 gpu_perc, 
-                 color="blue", 
+        plt.plot(ticks,
+                 gpu_perc,
+                 color="blue",
                  label="GPU Utilization")
 
-        plt.plot(ticks, 
-                cpu_perc, 
-                color="green", 
+        plt.plot(ticks,
+                cpu_perc,
+                color="green",
                 label="CPU Utilization")
         plt.legend()
-        
+
         plt.xlabel("time")
         plt.ylabel("Percentage utilized")
         plt.savefig("plots/{}_Cluster.jpg".format(self.model_type), bbox_inches="tight")
@@ -506,7 +522,7 @@ class Scheduler():
             else:
                 s += str(key) + "=" + repr(value) + ",\n"
         return s[:-2] + ")"
-    
+
     def __str__(self):
         s = "Scheduler("
         for key, value in self.__dict__.items():

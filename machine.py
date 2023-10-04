@@ -14,7 +14,7 @@ class Machine():
         self.total_gpus = total_gpus
         self.avail_gpus = total_gpus
         self.running_jobs = []
-        
+
         self.mem_util_pct = 0
         self.cpus_util_pct = 0
         self.gpus_util_pct = 0 if self.total_gpus > 0 else 100
@@ -43,26 +43,32 @@ class Machine():
         assert(self.avail_cpus >= 0)
         assert(self.avail_mem >= 0)
         assert(self.avail_gpus >= 0)
-        
+
     def get_util(self):
     # Returns the average utilization of this machine over the logged time period
         if len(self.avail_cpus_at_times) == 0:
             return 0
         mem_perc = [1 - mem/self.total_mem for mem in self.avail_mem_at_times]
         cpu_perc = [1 - cpu/self.total_cpus for cpu in self.avail_cpus_at_times]
-        
+
         if self.total_gpus != 0:
             gpu_perc = [1 - gpu/self.total_gpus for gpu in self.avail_gpus_at_times]
-            
+
         else:
             gpu_perc = [0 for _ in self.avail_gpus_at_times]
-        
+
         mem_avg = sum(mem_perc)/len(mem_perc)
         cpu_avg = sum(cpu_perc)/len(cpu_perc)
         gpu_avg = sum(gpu_perc)/len(gpu_perc)
-        
+
         return (mem_avg + cpu_avg + gpu_avg)/3
 
+    def can_run(self, job):
+        enough_mem = job.req_mem <= self.avail_mem
+        enough_cpus = job.req_cpus <= self.avail_cpus
+        enough_gpus = job.req_gpus <= self.avail_gpus
+
+        return enough_mem and enough_cpus and enough_gpus
 
     def stop_job(self, job_name:str):
         # remove a job and free up the resources it was using
@@ -72,7 +78,7 @@ class Machine():
                 job_to_remove = self.running_jobs[index]
                 self.running_jobs = self.running_jobs[:index] + self.running_jobs[index+1:]
                 break
-        
+
         if job_to_remove == None:
             print("{} not found running on this machine".format(job_name))
         else:
@@ -83,7 +89,7 @@ class Machine():
             assert(self.avail_mem <= self.total_mem)
             assert(self.avail_cpus <= self.total_cpus)
             assert(self.avail_gpus <= self.total_gpus)
-            
+
     def plot_usage(self, model_type):
         fig = plt.figure(figsize=[12,10])
         fig.suptitle("Utilization for {}".format(self.node_name))
@@ -94,37 +100,37 @@ class Machine():
         else:
             gpu_perc = [0 for _ in self.avail_gpus_at_times]
         ticks = [datetime.fromtimestamp(t) for t in self.tick_times]
-        
+
         plt.plot(ticks,
-                 mem_perc, 
-                 color="red", 
+                 mem_perc,
+                 color="red",
                  label="Memory Utilization")
 
-        plt.plot(ticks, 
-                 gpu_perc, 
-                 color="blue", 
+        plt.plot(ticks,
+                 gpu_perc,
+                 color="blue",
                  label="GPU Utilization")
 
-        plt.plot(ticks, 
-                cpu_perc, 
-                color="green", 
+        plt.plot(ticks,
+                cpu_perc,
+                color="green",
                 label="CPU Utilization")
         plt.legend()
-        
+
         plt.xlabel("time")
         plt.ylabel("Percentage utilized")
         plt.savefig("plots/{}_{}.jpg".format(model_type, self.node_name), bbox_inches="tight")
         plt.close(fig)
-        
+
     def __repr__(self):
         s = "Machine("
         for key, value in self.__dict__.items():
             s += str(key) + "=" + repr(value) + ", "
         return s[:-2] + ")"
-    
+
     def __str__(self):
         s = "Machine("
         for key, value in self.__dict__.items():
             s += str(key) + "=" + repr(value) + ", "
-        return s[:-2] + ")"   
-    
+        return s[:-2] + ")"
+
