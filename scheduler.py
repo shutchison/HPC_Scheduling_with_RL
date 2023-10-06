@@ -6,6 +6,7 @@ from datetime import datetime
 import csv
 import logging
 import matplotlib.pyplot as plt
+import numpy as np
 
 class Scheduler():
     def __init__(self, model_type:str) -> None: # what scheduling method to use
@@ -246,7 +247,6 @@ class Scheduler():
                         break
                 if not any_scheduled:
                     none_can_be_scheduled = True
-
         elif self.model_type == "fcfs":
             # Schedule the first job in the queue until the first job in the queue can not be 
             # scheduled, or the queue is empty.
@@ -363,13 +363,15 @@ class Scheduler():
         # action should be (job_queue_index, machine_index)
         # will assign the job at index job_queue_index to the machine at
         # machine_index
+        # returns True if the simulation has more to do, False if there is nothing left to do.
         more_to_do = self.rl_tick()
+
         if not more_to_do:
             return False
 
         job_index, machine_index = action
         # Confirm this is a valid job index and machine index
-        if job_index > len(self.job_queue) or machine_index > len(self.machines):
+        if job_index > len(self.job_queue)-1 or machine_index > len(self.machines)-1:
             print(f"Action {action} appears to be invalid.")
             print(f"{len(self.job_queue)} jobs in the queue.")
             print(f"{len(self.machines)} machines in the cluster")
@@ -379,12 +381,18 @@ class Scheduler():
         job = self.job_queue[job_index]
         assigned_machine = self.machines[machine_index]
 
+        # print(f"Trying to schedule {job}")
+        # print(f"on machine {assigned_machine}")
+
         # Confirm this machine can actually run this job.  If not, do nothing
-        if not machine.can_run(job):
+        if not assigned_machine.can_run(job):
+            # print(f"{assigned_machine.node_name} lacks the resources to run {job.job_name}")
             more_to_do = True
             return more_to_do
 
+        # print(f"Starting {job} on {assigned_machine}")
         assigned_machine.start_job(job)
+        self.set_job_time(job)
         self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
         self.running_jobs.put( (job.end_time, job) )
         self.job_queue = self.job_queue[:job_index] + self.job_queue[job_index+1:]
@@ -425,26 +433,106 @@ class Scheduler():
                         any_job_can_run = True
                         break
                 if any_job_can_run:
-                    return True
-            # self.tick will no schedule any jobs if the model_type is set to
-            # "machine learning", but will advance time.
-            more_to_do = self.tick()
-            if not more_to_do:
+                    more_to_do = True
+                    return more_to_do
+            
+            # move jobs who have been submitted now into the job_queue
+            while not self.future_jobs.empty():
+                first_submit = self.future_jobs.queue[0][0]
+                if first_submit > self.global_clock:
+                    break
+                elif first_submit == self.global_clock:
+                    job = self.future_jobs.get()[1]
+                    self.logger.info("{} submitted at time {}".format(job.job_name, self.global_clock))
+                    self.job_queue.append(job)
+
+            # stop all jobs who end at the current time and move them to completed
+            while not self.running_jobs.empty():
+                first_end = self.running_jobs.queue[0][0]
+                if first_end > self.global_clock:
+                    break
+                elif first_end == self.global_clock:
+                    end_time, job = self.running_jobs.get()
+                    found = False
+                    for m in self.machines:
+                        for j in m.running_jobs:
+                            if job.job_name == j.job_name:
+                                self.logger.info("job {} ending at time {}".format(job.job_name, self.global_clock))
+                                found = True
+                                m.stop_job(job.job_name)
+                                self.completed_jobs.append(job)
+                                self.machines_log_status()
+                                self.log_training_data_csv(job, self.machines, m.node_name, "Stop")
+                                break
+                        if found:
+                            break
+
+            any_schedulable_jobs = False
+            for job in self.job_queue:
+                for machine in self.machines:
+                    if machine.can_run(job):
+                        any_schedulable_jobs = True
+                        break
+                if any_schedulable_jobs:
+                    # There is more to do at the current time step, so return
+                    more_to_do = True
+                    return more_to_do
+
+            if self.future_jobs.empty() and self.running_jobs.empty() :
+                print("No future jobs, no running jobs!")
                 return False
+
+            # update global clock to be the next submisison or ending event
+            first_submit = 1e100
+            first_end = 1e100
+            if not self.future_jobs.empty():
+                first_submit = self.future_jobs.queue[0][0]
+            if not self.running_jobs.empty():
+                first_end = self.running_jobs.queue[0][0]
+
+            self.global_clock = min(first_submit, first_end)
+
+            if self.global_clock == 1e100:
+                print("Something has gone wrong updating the global clock.")
+                return False
+
+            # Print status information to ensure progress happening
+            #if len(self.completed_jobs) % 1000 == 0:
+            #    print(f"{len(self.completed_jobs)}/{self.num_total_jobs} jobs completed")
+            #    print(f"Current queue depth is {len(self.job_queue)}")
 
     def set_job_time(self, job):
         job.start_time = self.global_clock
         job.end_time = self.global_clock + job.actual_duration
 
+    def get_obs(self, queue_depth_to_look):
+        obs = []
+        # Only look so deep in the queue and pad if not enough jobs in the job queue
+        for i in range(queue_depth_to_look):
+            if i < len(self.job_queue):
+                job = self.job_queue[i]
+                obs.append(job.req_mem)
+                obs.append(job.req_cpus)
+                obs.append(job.req_gpus)
+                obs.append(job.req_duration)
+            else:
+                obs.extend([0, 0, 0, 0])
+        for machine in self.machines:
+            obs.append(machine.avail_mem)
+            obs.append(machine.avail_cpus)
+            obs.append(machine.avail_gpus)
+        
+        return np.array(obs)
+
     def calculate_metrics(self) -> float:
-        #returns a tuple (avg_queue_time, avg_clutser_util)
+        # returns a tuple (avg_queue_time, avg_clutser_util) 
 
         # iterate through self.completed_jobs and compute the avg queue time for all jobs which have been compelted
         queue_sum = sum([job.start_time-job.submission_time for job in self.completed_jobs])
         if len(self.completed_jobs) != 0:
             avg_queue_time = queue_sum/len(self.completed_jobs)
         else:
-            raise ValueError("There are no completed jobs!")
+            avg_queue_time = 0
 
         utils = []
         for m in self.machines:
@@ -513,6 +601,12 @@ class Scheduler():
         plt.ylabel("Percentage utilized")
         plt.savefig("plots/{}_Cluster.jpg".format(self.model_type), bbox_inches="tight")
         plt.close(fig)
+
+    def print_info(self):
+        print(f"num future_job     = {len(self.future_jobs.queue)}")
+        print(f"num job_queue      = {len(self.job_queue)}")
+        print(f"num running_jobs   = {len(self.running_jobs.queue)}")
+        print(f"num completed_jobs = {len(self.completed_jobs)}")
 
     def __repr__(self):
         s = "Scheduler("

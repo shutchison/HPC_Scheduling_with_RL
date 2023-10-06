@@ -4,7 +4,7 @@ import random
 import time
 from distutils.util import strtobool
 
-import gym
+import gymnasium as gym
 import gym_microrts # fmt: off
 import numpy as np
 import torch
@@ -13,6 +13,8 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
+gym.register(id="HPCEnv-v0", entry_point="hpc_env:HPCEnv")
+env = gym.make("HPCEnv-v0")
 
 def parse_args():
     # fmt: off
@@ -92,12 +94,10 @@ def make_env(gym_id, seed, idx, capture_video, run_name):
 
     return thunk
 
-
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
-
 
 class Transpose(nn.Module):
     def __init__(self, permutation):
@@ -105,30 +105,50 @@ class Transpose(nn.Module):
         self.permutation = permutation
 
     def forward(self, x):
+        print(f"permutation is {self.permutation}")
         return x.permute(self.permutation)
 
 
 class Agent(nn.Module):
     def __init__(self, envs):
+        print()
+        print(f"envs.observation_space.shape is {envs.observation_space.shape}")
+        print(f"envs.single_action_space.shape is {envs.single_action_space.shape}")
+        print(f"envs.single_action_space.nvec is {envs.single_action_space.nvec}")
+        print(f"envs.single_action_space.nvec.prod() is {envs.single_action_space.nvec.prod()}")
+        print()
+
         super(Agent, self).__init__()
+        # self.network = nn.Sequential(
+        #     # input.dim() = 2 is not equal to len(dims) = 4 error??
+        #     Transpose((0, 3, 1, 2)),
+        #     layer_init(nn.Conv2d(27, 16, kernel_size=3, stride=2)),
+        #     nn.ReLU(),
+        #     layer_init(nn.Conv2d(16, 32, kernel_size=2)),
+        #     nn.ReLU(),
+        #     nn.Flatten(),
+        #     layer_init(nn.Linear(32*3*3, 128)),
+        #     nn.ReLU(),
+        # )
+
         self.network = nn.Sequential(
-            Transpose((0, 3, 1, 2)),
-            layer_init(nn.Conv2d(27, 16, kernel_size=3, stride=2)),
-            nn.ReLU(),
-            layer_init(nn.Conv2d(16, 32, kernel_size=2)),
-            nn.ReLU(),
-            nn.Flatten(),
-            layer_init(nn.Linear(32*3*3, 128)),
-            nn.ReLU(),
+                layer_init(nn.Linear(np.array(envs.observation_space.shape[1]), 64)),
+                nn.Tanh(),
+                layer_init(nn.Linear(64, 64)),
+                nn.Tanh(),
+                layer_init(nn.Linear(64, envs.single_action_space.nvec.prod()), std=1.0)
         )
+
         self.nvec = envs.single_action_space.nvec
         self.actor = layer_init(nn.Linear(128, self.nvec.sum()), std=0.01)
         self.critic = layer_init(nn.Linear(128, 1), std=1)
-
+        
     def get_value(self, x):
         return self.critic(self.network(x))
 
     def get_action_and_value(self, x, action=None):
+        #print(f"self.network.shape is {self.network.shape}")
+        print(f"x.shape is {x.shape}")
         hidden = self.network(x)
         logits = self.actor(hidden)
         split_logits = torch.split(logits, self.nvec.tolist(), dim=1)
@@ -138,7 +158,6 @@ class Agent(nn.Module):
         logprob = torch.stack([categorical.log_prob(a) for a, categorical in zip(action, multi_categoricals)])
         entropy = torch.stack([categorical.entropy() for categorical in multi_categoricals])
         return action.T, logprob.sum(0), entropy.sum(0), self.critic(hidden)
-
 
 if __name__ == "__main__":
     args = parse_args()
@@ -189,7 +208,10 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs = torch.Tensor(envs.reset()).to(device)
+
+    # It looks like this version of gym, reset doesn't return (obs, info_dict), only obs?
+    obsers, infos = envs.reset()
+    next_obs = torch.Tensor(obsers).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
 
@@ -205,6 +227,7 @@ if __name__ == "__main__":
             obs[step] = next_obs
             dones[step] = next_done
 
+            print(f"next_obs.shape is {next_obs.shape}")
             # ALGO LOGIC: action logic
             with torch.no_grad():
                 action, logprob, _, value = agent.get_action_and_value(next_obs)
