@@ -372,9 +372,11 @@ class Scheduler():
         job_index, machine_index = action
         # Confirm this is a valid job index and machine index
         if job_index > len(self.job_queue)-1 or machine_index > len(self.machines)-1:
-            print(f"Action {action} appears to be invalid.")
-            print(f"{len(self.job_queue)} jobs in the queue.")
-            print(f"{len(self.machines)} machines in the cluster")
+            # print("="*40)
+            # print(f"Action {action} appears to be invalid.")
+            # print(f"{len(self.job_queue)} jobs in the queue.")
+            # print(f"{len(self.machines)} machines in the cluster")
+            
             more_to_do = True
             return more_to_do
 
@@ -523,6 +525,37 @@ class Scheduler():
             obs.append(machine.avail_gpus)
         
         return np.array(obs)
+
+    def get_action_mask(self, queue_depth: int):
+        # This allows us to mask off invalid actions (i.e. job/machine assignments which
+        # are not valid).  Returns a list of booleans
+        # action [0,1] would indicate assigning the job at index 0 to the machine at index 1
+        # True if machines[1] can run job_queue[0], False if it cannot
+        # This should be the same dimension as the action space
+        # (default_queue_depth * 4) + (num_machines * 3)
+        # 4 features per job up to the queue depth (req_mem, req_cpus, req_gpus, req_duration)
+        # 3 features per machine (avail_mem, avail_cpus, avail_gpus)
+        masks = []
+        for i in range(queue_depth):
+            job_valid = False
+            try:
+                job = self.job_queue[i]
+            except IndexError:
+                masks.append(False)
+                continue
+            for machine in self.machines:
+                if machine.can_run(job):
+                    masks.append(True)
+                else:
+                    masks.append(False)
+        action_space_length = (queue_depth * 4) + (len(self.machines) * 3)
+        if len(masks) != action_space_length:
+            print("Error: Masks should have the same length as the action space")
+            print(f"action_space_length={action_space_length}, len(masks)={len(masks)}")
+
+        return masks
+
+            
 
     def calculate_metrics(self) -> float:
         # returns a tuple (avg_queue_time, avg_clutser_util) 

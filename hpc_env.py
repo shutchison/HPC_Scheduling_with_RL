@@ -9,6 +9,8 @@ from enum import Enum
 
 MACHINES_CSV = "./data/machines.csv"
 JOBS_CSV = "./data/low_util.csv"
+# MACHINES_CSV = "./data/tiny_machines.csv"
+# JOBS_CSV = "./data/fcfs_test_jobs.csv"
 
 DEFAULT_QUEUE_DEPTH = 10
 METRIC_WINDOW_SIZE = 100
@@ -18,11 +20,11 @@ class Metrics(Enum):
     AVG_CLUSTER_UTILIZATION = 1
 
 CURRENT_METRIC = Metrics.AVG_QUEUE_TIME
+# CURRENT_METRIC = Metrics.AVG_CLUSTER_UTILIZATION
 
 class HPCEnv(Env):
     def __init__(self):
-        # Set the seed.  Maybe change this to random later?
-
+        self.step_counter = 0
         self.scheduler = Scheduler("machine_learning")
         self.scheduler.load_machines(MACHINES_CSV)
         self.scheduler.load_jobs(JOBS_CSV)
@@ -65,6 +67,7 @@ class HPCEnv(Env):
         pass
 
     def step(self, action):
+        self.step_counter += 1
         more_to_do = self.scheduler.rl_schedule(action)
         terminated = not more_to_do
         obs = self.scheduler.get_obs(self.QUEUE_DEPTH)
@@ -81,13 +84,24 @@ class HPCEnv(Env):
         truncated = False
         info = {}
 
-        self.scheduler.print_info()
+        if self.step_counter % 10000 == 0:
+            self.scheduler.print_info()
 
         # ppo implementation expecting the following to be returned from step:
         # next_obs, reward, done, info
-        return (obs, reward, terminated, info)
+        return (obs, reward, terminated, truncated, info)
+
+    def action_mask(self):
+        masks = self.scheduler.get_action_mask(DEFAULT_QUEUE_DEPTH)
+        return masks
 
     def reset(self, seed=None, options={}):
+        self.scheduler = Scheduler("machine_learning")
+        self.scheduler.load_machines(MACHINES_CSV)
+        self.scheduler.load_jobs(JOBS_CSV)
+        self.NUM_MACHINES = len(self.scheduler.machines)
+        self.step_counter = 0
+
         obs = ([0] * 4) * self.QUEUE_DEPTH
         for m in self.scheduler.machines:
             obs.extend([0] * 3 )
