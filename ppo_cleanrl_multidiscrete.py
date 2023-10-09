@@ -5,7 +5,7 @@ import time
 from distutils.util import strtobool
 
 import gymnasium as gym
-import gym_microrts # fmt: off
+#import gym_microrts # fmt: off
 import numpy as np
 import torch
 import torch.nn as nn
@@ -21,7 +21,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp-name', type=str, default=os.path.basename(__file__).rstrip(".py"),
         help='the name of this experiment')
-    parser.add_argument('--gym-id', type=str, default="MicrortsMining-v1",
+    parser.add_argument('--gym-id', type=str, default="HPCEnv-v0",
         help='the id of the gym environment')
     parser.add_argument('--learning-rate', type=float, default=2.5e-4,
         help='the learning rate of the optimizer')
