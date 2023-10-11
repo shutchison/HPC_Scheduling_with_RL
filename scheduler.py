@@ -7,6 +7,7 @@ import csv
 import logging
 import matplotlib.pyplot as plt
 import numpy as np
+from collections.abc import Iterable
 
 class Scheduler():
     def __init__(self, model_type:str) -> None: # what scheduling method to use
@@ -365,6 +366,10 @@ class Scheduler():
         # will assign the job at index job_queue_index to the machine at
         # machine_index
         # returns True if the simulation has more to do, False if there is nothing left to do.
+        
+        if not isinstance(action, Iterable):
+            action = self.action_converter(action)
+        
         more_to_do = self.rl_tick()
 
         if not more_to_do:
@@ -373,10 +378,10 @@ class Scheduler():
         job_index, machine_index = action
         # Confirm this is a valid job index and machine index
         if job_index > len(self.schedulable_jobs)-1 or machine_index > len(self.machines)-1:
-            # print("="*40)
-            # print(f"Action {action} appears to be invalid.")
-            # print(f"{len(self.job_queue)} jobs in the queue.")
-            # print(f"{len(self.machines)} machines in the cluster")
+            print("="*40)
+            print(f"Action {action} appears to be invalid.")
+            print(f"{len(self.job_queue)} jobs in the queue.")
+            print(f"{len(self.machines)} machines in the cluster")
             
             more_to_do = True
             return more_to_do
@@ -389,7 +394,7 @@ class Scheduler():
 
         # Confirm this machine can actually run this job.  If not, do nothing
         if not assigned_machine.can_run(job):
-            # print(f"{assigned_machine.node_name} lacks the resources to run {job.job_name}")
+            print(f"{assigned_machine.node_name} lacks the resources to run {job.job_name}")
             more_to_do = True
             return more_to_do
 
@@ -564,7 +569,8 @@ class Scheduler():
         # [0, 1] = 1
         # [1, 0] = num_machines * 1 + 0
         num_machines = len(self.machines)
-        if type(action) is int:
+
+        if not isinstance(action, Iterable):
             job_queue_index = action//num_machines
             machine_index = action - (job_queue_index * num_machines)
             return [job_queue_index, machine_index]
@@ -613,7 +619,6 @@ class Scheduler():
         if len(masks) != action_space_length:
             print("Error: Masks should have the same length as the action space")
             print(f"action_space_length={action_space_length}, len(masks)={len(masks)}")
-
         return masks
 
     def calculate_metrics(self) -> float:

@@ -19,8 +19,8 @@ class Metrics(Enum):
     AVG_QUEUE_TIME = 0
     AVG_CLUSTER_UTILIZATION = 1
 
-# CURRENT_METRIC = Metrics.AVG_QUEUE_TIME
-CURRENT_METRIC = Metrics.AVG_CLUSTER_UTILIZATION
+CURRENT_METRIC = Metrics.AVG_QUEUE_TIME
+# CURRENT_METRIC = Metrics.AVG_CLUSTER_UTILIZATION
 
 class HPCEnv(Env):
     def __init__(self):
@@ -35,8 +35,9 @@ class HPCEnv(Env):
         # Is this even necessary?
         self.QUEUE_DEPTH = min(DEFAULT_QUEUE_DEPTH, len(self.scheduler.future_jobs.queue))
 
-        self.action_space = spaces.MultiDiscrete([self.QUEUE_DEPTH, self.NUM_MACHINES])
-
+        #self.action_space = spaces.MultiDiscrete([self.QUEUE_DEPTH, self.NUM_MACHINES])
+        self.action_space = spaces.Discrete(self.QUEUE_DEPTH * self.NUM_MACHINES)
+        
         # 4 attributes per job: req_mem, req_cpus, req_gpus, req_duration
         # 3 attributes per node: avail_mem, avail_cpus, avail_gpus
         low = [0] * self.QUEUE_DEPTH * 4
