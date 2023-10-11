@@ -4,7 +4,7 @@ import random
 import time
 from distutils.util import strtobool
 
-import gym
+import gymnasium as gym
 import gym_microrts  # noqa
 import numpy as np
 import torch
@@ -13,6 +13,7 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
+gym.register(id="HPCEnv-v0", entry_point="hpc_env:HPCEnv")
 
 def parse_args():
     # fmt: off
@@ -129,28 +130,48 @@ class CategoricalMasked(Categorical):
 class Agent(nn.Module):
     def __init__(self, envs):
         super(Agent, self).__init__()
-        self.network = nn.Sequential(
-            Transpose((0, 3, 1, 2)),
-            layer_init(nn.Conv2d(27, 16, kernel_size=3, stride=2)),
-            nn.ReLU(),
-            layer_init(nn.Conv2d(16, 32, kernel_size=2)),
-            nn.ReLU(),
-            nn.Flatten(),
-            layer_init(nn.Linear(32 * 3 * 3, 128)),
-            nn.ReLU(),
-        )
+
         self.nvec = envs.single_action_space.nvec
-        self.actor = layer_init(nn.Linear(128, self.nvec.sum()), std=0.01)
-        self.critic = layer_init(nn.Linear(128, 1), std=1)
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(envs.observation_space.shape[1], 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, self.nvec.sum()), std=0.01),
+        )
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(envs.observation_space.shape[1], 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 1), std=1.0),
+        )
+        # self.network = nn.Sequential(
+        #     Transpose((0, 3, 1, 2)),
+        #     layer_init(nn.Conv2d(27, 16, kernel_size=3, stride=2)),
+        #     nn.ReLU(),
+        #     layer_init(nn.Conv2d(16, 32, kernel_size=2)),
+        #     nn.ReLU(),
+        #     nn.Flatten(),
+        #     layer_init(nn.Linear(32 * 3 * 3, 128)),
+        #     nn.ReLU(),
+        # )
+        # self.nvec = envs.single_action_space.nvec
+        # self.actor = layer_init(nn.Linear(128, self.nvec.sum()), std=0.01)
+        # self.critic = layer_init(nn.Linear(128, 1), std=1)
 
     def get_value(self, x):
-        return self.critic(self.network(x))
+        return self.critic(x)
+        # return self.critic(self.network(x))
 
-    def get_action_and_value(self, x, action_mask, action=None):
-        hidden = self.network(x)
-        logits = self.actor(hidden)
+    def get_action_and_value(self, next_obs, action_mask, action=None):
+        #hidden = self.network(x)
+
+        logits = self.actor(next_obs)
         split_logits = torch.split(logits, self.nvec.tolist(), dim=1)
+        print(f"logits.shape is {logits.shape}")
         split_action_masks = torch.split(action_mask, self.nvec.tolist(), dim=1)
+        
         multi_categoricals = [
             CategoricalMasked(logits=logits, masks=iam) for (logits, iam) in zip(split_logits, split_action_masks)
         ]
@@ -158,7 +179,7 @@ class Agent(nn.Module):
             action = torch.stack([categorical.sample() for categorical in multi_categoricals])
         logprob = torch.stack([categorical.log_prob(a) for a, categorical in zip(action, multi_categoricals)])
         entropy = torch.stack([categorical.entropy() for categorical in multi_categoricals])
-        return action.T, logprob.sum(0), entropy.sum(0), self.critic(hidden)
+        return action.T, logprob.sum(0), entropy.sum(0), self.critic(next_obs)
 
 
 if __name__ == "__main__":
@@ -206,12 +227,15 @@ if __name__ == "__main__":
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    action_masks = torch.zeros((args.num_steps, args.num_envs) + (envs.single_action_space.nvec.sum(),)).to(device)
+    # action_masks = torch.zeros((args.num_steps, args.num_envs) + (envs.single_action_space.nvec.sum(),)).to(device)
+    action_masks = torch.zeros((args.num_steps, args.num_envs) + (envs.single_action_space.nvec.prod(),)).to(device)
+    print(f"action_masks shape is {action_masks.shape}")
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs = torch.Tensor(envs.reset()).to(device)
+    obsers, infos = envs.reset()
+    next_obs = torch.Tensor(obsers).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
 
@@ -226,7 +250,9 @@ if __name__ == "__main__":
             global_step += 1 * args.num_envs
             obs[step] = next_obs
             dones[step] = next_done
-            action_masks[step] = torch.Tensor(np.array([env.action_mask for env in envs.envs]))
+            masks = [env.action_mask() for env in envs.envs]
+            print(f"Any can be run? {[any(mask) for mask in masks]}")
+            action_masks[step] = torch.Tensor(np.array(masks))
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
@@ -240,12 +266,23 @@ if __name__ == "__main__":
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
 
-            for item in info:
-                if "episode" in item.keys():
-                    print(f"global_step={global_step}, episodic_return={item['episode']['r']}")
-                    writer.add_scalar("charts/episodic_return", item["episode"]["r"], global_step)
-                    writer.add_scalar("charts/episodic_length", item["episode"]["l"], global_step)
-                    break
+
+            for key, value in info.items():
+                if key == "final_info":
+                    for index, item in enumerate(value):
+                        if item is not None:
+                            episode_data = item['episode']
+                            # print("!*!*!*!  WE MADE IT IN HERE!!!")
+                            print(f"global_step={global_step}, episodic_return={episode_data['r']}")
+                            writer.add_scalar("charts/episodic_return", episode_data["r"], global_step)
+                            writer.add_scalar("charts/episodic_length", episode_data["l"], global_step)
+                            break
+            # for item in info:
+            #     if "episode" in item.keys():
+            #         print(f"global_step={global_step}, episodic_return={item['episode']['r']}")
+            #         writer.add_scalar("charts/episodic_return", item["episode"]["r"], global_step)
+            #         writer.add_scalar("charts/episodic_length", item["episode"]["l"], global_step)
+            #         break
 
         # bootstrap value if not done
         with torch.no_grad():

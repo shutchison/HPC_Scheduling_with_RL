@@ -8,7 +8,7 @@ import numpy as np
 from enum import Enum
 
 MACHINES_CSV = "./data/machines.csv"
-JOBS_CSV = "./data/low_util.csv"
+JOBS_CSV = "./data/500_jobs.csv"
 # MACHINES_CSV = "./data/tiny_machines.csv"
 # JOBS_CSV = "./data/fcfs_test_jobs.csv"
 
@@ -19,8 +19,8 @@ class Metrics(Enum):
     AVG_QUEUE_TIME = 0
     AVG_CLUSTER_UTILIZATION = 1
 
-CURRENT_METRIC = Metrics.AVG_QUEUE_TIME
-# CURRENT_METRIC = Metrics.AVG_CLUSTER_UTILIZATION
+# CURRENT_METRIC = Metrics.AVG_QUEUE_TIME
+CURRENT_METRIC = Metrics.AVG_CLUSTER_UTILIZATION
 
 class HPCEnv(Env):
     def __init__(self):
@@ -84,7 +84,7 @@ class HPCEnv(Env):
         truncated = False
         info = {}
 
-        if self.step_counter % 10000 == 0:
+        if self.step_counter % 1000 == 0:
             self.scheduler.print_info()
 
         # ppo implementation expecting the following to be returned from step:
@@ -102,11 +102,10 @@ class HPCEnv(Env):
         self.NUM_MACHINES = len(self.scheduler.machines)
         self.step_counter = 0
 
-        obs = ([0] * 4) * self.QUEUE_DEPTH
-        for m in self.scheduler.machines:
-            obs.extend([0] * 3 )
-        #self.print_obs(obs)
-        obs = np.array(obs)
+        # Advance time until there's something to do
+        self.scheduler.rl_tick()
+        obs = self.scheduler.get_obs(self.QUEUE_DEPTH)
+
         info = {}
 
         return (obs, info)

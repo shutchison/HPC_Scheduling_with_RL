@@ -121,7 +121,7 @@ class Agent(nn.Module):
         super(Agent, self).__init__()
         # # Original code below:
         # self.network = nn.Sequential(
-        #     # Transpose((0, 3, 1, 2)),
+        #     Transpose((0, 3, 1, 2)),
         #     layer_init(nn.Conv2d(27, 16, kernel_size=3, stride=2)),
         #     nn.ReLU(),
         #     layer_init(nn.Conv2d(16, 32, kernel_size=2)),
@@ -134,7 +134,7 @@ class Agent(nn.Module):
         # self.nvec = envs.single_action_space.nvec
         # self.actor = layer_init(nn.Linear(128, self.nvec.sum()), std=0.01)
         # self.critic = layer_init(nn.Linear(128, 1), std=1)
-        # # End origianl code
+        # # # End origianl code
 
         self.nvec = envs.single_action_space.nvec
         self.actor = nn.Sequential(
@@ -151,6 +151,13 @@ class Agent(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(64, 1), std=1.0),
         )
+
+        # Actor:
+        # input is observation space and output is action space
+
+        # Critic:
+        # value for each of the of the actions
+        #
 
         # self.network = nn.Sequential(
         #         layer_init(nn.Linear(np.array(envs.observation_space.shape[1]), 64)),
@@ -177,7 +184,11 @@ class Agent(nn.Module):
         logits = self.actor(next_obs)
         #print(f"logits is {logits}")
         #print(f"logits.shape is {logits.shape}")
+        
         split_logits = torch.split(logits, self.nvec.tolist(), dim=1)
+        #print(f"split_logits is {split_logits}")
+        #print(f"split_logits.shape is {split_logits.shape}")
+        
         multi_categoricals = [Categorical(logits=logits) for logits in split_logits]
         #print(f"multi_categoricals is {multi_categoricals}")
         if action is None:
@@ -229,6 +240,8 @@ if __name__ == "__main__":
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
     actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
+    #print(f"!*!*!*actions.shape is {actions.shape}")
+    # print(f"actions is {actions}")
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
@@ -256,7 +269,7 @@ if __name__ == "__main__":
             obs[step] = next_obs
             dones[step] = next_done
 
-            #print(f"next_obs.shape is {next_obs.shape}")
+            # print(f"next_obs.shape is {next_obs.shape}")
             # ALGO LOGIC: action logic
             with torch.no_grad():
                 action, logprob, _, value = agent.get_action_and_value(next_obs)

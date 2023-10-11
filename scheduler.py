@@ -17,12 +17,14 @@ class Scheduler():
         #initialize self.future_jobs with all jobs we need to run
         self.future_jobs = queue.PriorityQueue()  # ordered based on submit time
         self.job_queue = []
+        self.schedulable_jobs = []
         self.running_jobs = queue.PriorityQueue() # ordered based on end time
         self.completed_jobs = []
         self.failed_jobs = []
 
-        logging.basicConfig(filename="output_files/simulation.log", level="DEBUG")
-        self.logger = logging.getLogger("Scheduling")
+        # disabling logging to increase speed
+        #logging.basicConfig(filename="output_files/simulation.log", level="DEBUG")
+        #self.logger = logging.getLogger("Scheduling")
 
         self.csv_outfile_name = "output_files/test.csv"
         self.header_written = False
@@ -146,7 +148,6 @@ class Scheduler():
             writer = csv.writer(csvfile)
             writer.writerow([self.global_clock, job.job_name, action] + [assignment] + job_data + machine_data)
 
-
     def tick(self):
         # iterate through self.future_jobs to find all jobs with job.submission_time == self.global_clock
         # move these jobs to self.job_queue ordered based on job.submision_time
@@ -162,7 +163,7 @@ class Scheduler():
                 break
             elif first_submit == self.global_clock:
                 job = self.future_jobs.get()[1]
-                self.logger.info("{} submitted at time {}".format(job.job_name, self.global_clock))
+                # self.logger.info("{} submitted at time {}".format(job.job_name, self.global_clock))
                 self.job_queue.append(job)
 
         # stop all jobs who end at the current time and move them to completed
@@ -176,12 +177,12 @@ class Scheduler():
                 for m in self.machines:
                     for j in m.running_jobs:
                         if job.job_name == j.job_name:
-                            self.logger.info("job {} ending at time {}".format(job.job_name, self.global_clock))
+                            #self.logger.info("job {} ending at time {}".format(job.job_name, self.global_clock))
                             found = True
                             m.stop_job(job.job_name)
                             self.completed_jobs.append(job)
                             self.machines_log_status()
-                            self.log_training_data_csv(job, self.machines, m.node_name, "Stop")
+                            #self.log_training_data_csv(job, self.machines, m.node_name, "Stop")
                             break
                     if found:
                         break
@@ -238,11 +239,11 @@ class Scheduler():
                         self.set_job_time(job)
                         assigned_machine.start_job(job)
 
-                        self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+                        #self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
                         any_scheduled = True
                         self.running_jobs.put( (job.end_time, job) )
                         self.job_queue = self.job_queue[:index] + self.job_queue[index+1:]
-                        self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+                        #self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
                         self.machines_log_status()
                         break
                 if not any_scheduled:
@@ -264,11 +265,11 @@ class Scheduler():
                     self.set_job_time(job)
                     assigned_machine.start_job(job)
 
-                    self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+                    #self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
                     any_scheduled = True
                     self.running_jobs.put( (job.end_time, job) )
                     self.job_queue = self.job_queue[1:]
-                    self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+                    #self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
                     self.machines_log_status()
                 else:
                     # Need a check in here if a job is un-runnable on any HPC machine, or we will fail to terminate
@@ -280,7 +281,7 @@ class Scheduler():
                     if not can_run_on_any_machine:
                         self.job_queue = self.job_queue[1:]
                         self.failed_jobs.append(job)
-                        self.logger.info("{} is unrunnable on any machine in the cluster".format(job.job_name, self.global_clock))
+                        #self.logger.info("{} is unrunnable on any machine in the cluster".format(job.job_name, self.global_clock))
                         continue
                     break
         elif self.model_type == "bfbp":
@@ -338,10 +339,10 @@ class Scheduler():
                     self.set_job_time(job)
                     assigned_machine.start_job(job)
 
-                    self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+                    #self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
                     self.running_jobs.put( (job.end_time, job) )
                     self.job_queue = self.job_queue[:best_job_index] + self.job_queue[best_job_index+1:]
-                    self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+                    #self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
                     self.machines_log_status()
 
                 # No machine can run any job
@@ -371,7 +372,7 @@ class Scheduler():
 
         job_index, machine_index = action
         # Confirm this is a valid job index and machine index
-        if job_index > len(self.job_queue)-1 or machine_index > len(self.machines)-1:
+        if job_index > len(self.schedulable_jobs)-1 or machine_index > len(self.machines)-1:
             # print("="*40)
             # print(f"Action {action} appears to be invalid.")
             # print(f"{len(self.job_queue)} jobs in the queue.")
@@ -380,7 +381,7 @@ class Scheduler():
             more_to_do = True
             return more_to_do
 
-        job = self.job_queue[job_index]
+        job__queue_index, job = self.schedulable_jobs[job_index]
         assigned_machine = self.machines[machine_index]
 
         # print(f"Trying to schedule {job}")
@@ -395,11 +396,12 @@ class Scheduler():
         # print(f"Starting {job} on {assigned_machine}")
         assigned_machine.start_job(job)
         self.set_job_time(job)
-        self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+        #self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
         self.running_jobs.put( (job.end_time, job) )
-        self.job_queue = self.job_queue[:job_index] + self.job_queue[job_index+1:]
-        self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+        self.job_queue = self.job_queue[:job__queue_index] + self.job_queue[job__queue_index+1:]
+        #self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
         self.machines_log_status()
+        self.update_scheduable_jobs()
 
         # If there's a job that could run on any machine, we can make another
         # scheudling decision, so we can make another scheduling decision at
@@ -420,12 +422,11 @@ class Scheduler():
         more_to_do = self.rl_tick()
         return more_to_do
 
-
+    def rl_tick(self):
     # rl_tick will advance time until another scheudling action can occur, or
     # the simulation ends.
     # Returns True if there is more to do, False if the simulation has
     # completed.
-    def rl_tick(self):
         while True:
             any_job_can_run = False
 
@@ -436,6 +437,7 @@ class Scheduler():
                         break
                 if any_job_can_run:
                     more_to_do = True
+                    self.update_scheduable_jobs()
                     return more_to_do
             
             # move jobs who have been submitted now into the job_queue
@@ -445,7 +447,7 @@ class Scheduler():
                     break
                 elif first_submit == self.global_clock:
                     job = self.future_jobs.get()[1]
-                    self.logger.info("{} submitted at time {}".format(job.job_name, self.global_clock))
+                    #self.logger.info("{} submitted at time {}".format(job.job_name, self.global_clock))
                     self.job_queue.append(job)
 
             # stop all jobs who end at the current time and move them to completed
@@ -459,12 +461,12 @@ class Scheduler():
                     for m in self.machines:
                         for j in m.running_jobs:
                             if job.job_name == j.job_name:
-                                self.logger.info("job {} ending at time {}".format(job.job_name, self.global_clock))
+                                #self.logger.info("job {} ending at time {}".format(job.job_name, self.global_clock))
                                 found = True
                                 m.stop_job(job.job_name)
                                 self.completed_jobs.append(job)
                                 self.machines_log_status()
-                                self.log_training_data_csv(job, self.machines, m.node_name, "Stop")
+                                #self.log_training_data_csv(job, self.machines, m.node_name, "Stop")
                                 break
                         if found:
                             break
@@ -478,10 +480,12 @@ class Scheduler():
                 if any_schedulable_jobs:
                     # There is more to do at the current time step, so return
                     more_to_do = True
+                    self.update_scheduable_jobs()
                     return more_to_do
 
             if self.future_jobs.empty() and self.running_jobs.empty() :
                 print("No future jobs, no running jobs!")
+                self.update_scheduable_jobs()
                 return False
 
             # update global clock to be the next submisison or ending event
@@ -496,6 +500,7 @@ class Scheduler():
 
             if self.global_clock == 1e100:
                 print("Something has gone wrong updating the global clock.")
+                self.update_scheduable_jobs()
                 return False
 
             # Print status information to ensure progress happening
@@ -507,24 +512,65 @@ class Scheduler():
         job.start_time = self.global_clock
         job.end_time = self.global_clock + job.actual_duration
 
+    def update_scheduable_jobs(self):
+        # Updates the list of tuples of jobs which are scheduable given the current 
+        # resources available on the machines in cluster
+        # [(job_queue_index, job), (job_queue_index, job]
+        self.schedulable_jobs = []
+        for job_index, job in enumerate(self.job_queue):
+            for machine in self.machines:
+                if machine.can_run(job):
+                    self.schedulable_jobs.append( (job_index, job) )
+                    break
+        
     def get_obs(self, queue_depth_to_look):
         obs = []
+
+        self.update_scheduable_jobs()
         # Only look so deep in the queue and pad if not enough jobs in the job queue
         for i in range(queue_depth_to_look):
-            if i < len(self.job_queue):
-                job = self.job_queue[i]
+            try:
+                job_index, job = self.schedulable_jobs[i]
                 obs.append(job.req_mem)
                 obs.append(job.req_cpus)
                 obs.append(job.req_gpus)
                 obs.append(job.req_duration)
-            else:
+            except IndexError:
                 obs.extend([0, 0, 0, 0])
+
+            # if i < len(self.job_queue):
+            #     job = self.job_queue[i]
+            #     obs.append(job.req_mem)
+            #     obs.append(job.req_cpus)
+            #     obs.append(job.req_gpus)
+            #     obs.append(job.req_duration)
+            # else:
+            #     obs.extend([0, 0, 0, 0])
         for machine in self.machines:
             obs.append(machine.avail_mem)
             obs.append(machine.avail_cpus)
             obs.append(machine.avail_gpus)
         
         return np.array(obs)
+
+    def action_converter(self, action):
+        # If action is a tuple or list, converts from 
+        # (job_queue_index, machine_index) into the index of the 1d action space
+        # If action is an int, converts from 1d action space index into
+        # (job_queue_index, machine_index)
+
+        # 1d action space is a list
+        # [0, 0] = 0
+        # [0, 1] = 1
+        # [1, 0] = num_machines * 1 + 0
+        num_machines = len(self.machines)
+        if type(action) is int:
+            job_queue_index = action//num_machines
+            machine_index = action - (job_queue_index * num_machines)
+            return [job_queue_index, machine_index]
+        else:
+            
+            return num_machines * action[0] + action[1]
 
     def get_action_mask(self, queue_depth: int):
         # This allows us to mask off invalid actions (i.e. job/machine assignments which
@@ -535,27 +581,40 @@ class Scheduler():
         # (default_queue_depth * 4) + (num_machines * 3)
         # 4 features per job up to the queue depth (req_mem, req_cpus, req_gpus, req_duration)
         # 3 features per machine (avail_mem, avail_cpus, avail_gpus)
+        
+        #print(f"specified queue depth is {queue_depth}")
         masks = []
         for i in range(queue_depth):
             job_valid = False
             try:
-                job = self.job_queue[i]
+                job_index, job = self.schedulable_jobs[i]
+                job_valid = True
             except IndexError:
-                masks.append(False)
-                continue
-            for machine in self.machines:
-                if machine.can_run(job):
-                    masks.append(True)
-                else:
-                    masks.append(False)
-        action_space_length = (queue_depth * 4) + (len(self.machines) * 3)
+                # There is no job at this positions in the job_queue,
+                # so it's not a valid scheduling decision
+                job = None
+                pass
+            for machine_index, machine in enumerate(self.machines):
+                can_run = False
+                if not job_valid:
+                    can_run = False
+                else:    
+                    if machine.can_run(job):
+                        can_run = True
+                    else:
+                        can_run = False
+                #print(f"[{i}, {machine_index}] can run? {can_run}")
+                masks.append(can_run)
+        # for index, job in enumerate(self.job_queue):
+        #     print(f"job_queue[{index}] is {job}")
+        
+        observation_space_length = (queue_depth * 4) + (len(self.machines) * 3)
+        action_space_length = queue_depth * len(self.machines)
         if len(masks) != action_space_length:
             print("Error: Masks should have the same length as the action space")
             print(f"action_space_length={action_space_length}, len(masks)={len(masks)}")
 
         return masks
-
-            
 
     def calculate_metrics(self) -> float:
         # returns a tuple (avg_queue_time, avg_clutser_util) 
@@ -636,8 +695,10 @@ class Scheduler():
         plt.close(fig)
 
     def print_info(self):
+        print("="*40)
         print(f"num future_job     = {len(self.future_jobs.queue)}")
         print(f"num job_queue      = {len(self.job_queue)}")
+        print(f"num scheduable jobs= {len(self.schedulable_jobs)}")
         print(f"num running_jobs   = {len(self.running_jobs.queue)}")
         print(f"num completed_jobs = {len(self.completed_jobs)}")
 
