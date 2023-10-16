@@ -249,6 +249,7 @@ class Scheduler():
                         break
                 if not any_scheduled:
                     none_can_be_scheduled = True
+
         elif self.model_type == "fcfs":
             # Schedule the first job in the queue until the first job in the queue can not be 
             # scheduled, or the queue is empty.
@@ -285,6 +286,7 @@ class Scheduler():
                         #self.logger.info("{} is unrunnable on any machine in the cluster".format(job.job_name, self.global_clock))
                         continue
                     break
+
         elif self.model_type == "bfbp":
             # Find the (job, machine) pairing which will result in the "fullest" machine, then start executing that job on that machine
             # Do this until there are no jobs left in the queue, or no more jobs will fit on any machine
@@ -354,7 +356,32 @@ class Scheduler():
             return
 
         elif self.model_type == "oracle":
-            return
+            self.job_queue.sort(key=lambda x: x.actual_duration) # oracle = shortest job first by actual duration
+
+            none_can_be_scheduled = False
+            while not none_can_be_scheduled:
+                any_scheduled = False
+                for index, job in enumerate(self.job_queue):
+                    # scheduled, machine = self.shortest_job_first(job)
+
+                    assigned_machine = None
+                    for m in self.machines:
+                        if (m.avail_mem >= job.req_mem) and (m.avail_cpus >= job.req_cpus) and (m.avail_gpus >= job.req_gpus):
+                            assigned_machine = m
+                            break
+                    if assigned_machine is not None:
+                        self.set_job_time(job)
+                        assigned_machine.start_job(job)
+
+                        #self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+                        any_scheduled = True
+                        self.running_jobs.put( (job.end_time, job) )
+                        self.job_queue = self.job_queue[:index] + self.job_queue[index+1:]
+                        #self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+                        self.machines_log_status()
+                        break
+                if not any_scheduled:
+                    none_can_be_scheduled = True
 
         else:
             print(f"Invalid model_type: {self.model_type}")
@@ -367,8 +394,8 @@ class Scheduler():
         # machine_index
         # returns True if the simulation has more to do, False if there is nothing left to do.
         
-        if not isinstance(action, Iterable):
-            action = self.action_converter(action)
+        #if not isinstance(action, Iterable):
+        action = self.action_converter(action)
         
         more_to_do = self.rl_tick()
 
@@ -570,13 +597,13 @@ class Scheduler():
         # [1, 0] = num_machines * 1 + 0
         num_machines = len(self.machines)
 
-        if not isinstance(action, Iterable):
-            job_queue_index = action//num_machines
-            machine_index = action - (job_queue_index * num_machines)
-            return [job_queue_index, machine_index]
-        else:
+        #if not isinstance(action, Iterable):
+        job_queue_index = action//num_machines
+        machine_index = action - (job_queue_index * num_machines)
+        return [job_queue_index, machine_index]
+        # else:
             
-            return num_machines * action[0] + action[1]
+        #     return num_machines * action[0] + action[1]
 
     def get_action_mask(self, queue_depth: int):
         # This allows us to mask off invalid actions (i.e. job/machine assignments which
