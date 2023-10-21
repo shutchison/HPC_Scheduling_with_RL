@@ -1,4 +1,4 @@
-#!/home/scotthutch/Desktop/rl_sched_venv/bin/python
+#!/homes/scotthutch/dissertation_code/HPC_Scheduling_with_RL/rl_sched_venv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys

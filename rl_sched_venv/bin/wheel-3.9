@@ -1,8 +1,8 @@
-#!/home/scotthutch/Desktop/rl_sched_venv/bin/python
+#!/homes/scotthutch/dissertation_code/HPC_Scheduling_with_RL/rl_sched_venv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys
-from swig import swig
+from wheel.cli import main
 if __name__ == '__main__':
     sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
-    sys.exit(swig())
+    sys.exit(main())
