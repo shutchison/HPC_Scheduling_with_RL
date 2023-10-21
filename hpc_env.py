@@ -8,12 +8,16 @@ import numpy as np
 from enum import Enum
 
 MACHINES_CSV = "./data/machines.csv"
+# JOBS_CSV = "./data/low_util.csv"
 JOBS_CSV = "./data/500_jobs.csv"
+
 # MACHINES_CSV = "./data/tiny_machines.csv"
 # JOBS_CSV = "./data/fcfs_test_jobs.csv"
 
 DEFAULT_QUEUE_DEPTH = 10
 METRIC_WINDOW_SIZE = 100
+
+# What percentage of jobs have a choice of machine on which they could be scheduled over time?
 
 class Metrics(Enum):
     AVG_QUEUE_TIME = 0
@@ -75,7 +79,9 @@ class HPCEnv(Env):
 
         # self.print_obs(obs)
 
+        # Try 0 reward for steps, and only using episodic reward?
         reward = 0
+    
         avg_queue_time, avg_cluster_util = self.scheduler.calculate_metrics()
         if CURRENT_METRIC == Metrics.AVG_QUEUE_TIME:
             reward = 0 - avg_queue_time
@@ -85,7 +91,7 @@ class HPCEnv(Env):
         truncated = False
         info = {}
 
-        if self.step_counter % 1000 == 0:
+        if self.step_counter % 400 == 0:
             self.scheduler.print_info()
 
         # ppo implementation expecting the following to be returned from step:

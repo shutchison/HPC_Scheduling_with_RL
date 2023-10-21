@@ -8,6 +8,9 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 from collections.abc import Iterable
+from sb3_contrib import MaskablePPO
+
+QUEUE_DEPTH = 10 # Should agree with the queue depth the model was trained on
 
 class Scheduler():
     def __init__(self, model_type:str) -> None: # what scheduling method to use
@@ -31,11 +34,18 @@ class Scheduler():
         self.header_written = False
 
         self.num_total_jobs = 0
+        self.temp_out_file = open(f"output_files/{self.model_type}.txt", "w")
 
-    def conduct_simulation(self, machines_csv, jobs_csv):
+        self.rl_model = None
+
+    def conduct_simulation(self, machines_csv, jobs_csv, model_to_load="ppo_mask"):
         self.load_machines(machines_csv)
         self.load_jobs(jobs_csv)
         print("Model is: {}".format(self.model_type))
+        if self.model_type == "machine_learning":
+            self.rl_model = MaskablePPO.load(model_to_load)
+            print(f"Model loaded from {model_to_load}")
+        
         start_time = datetime.now()
         while True:
             if not self.tick():
@@ -189,12 +199,12 @@ class Scheduler():
                         break
 
         # Try to schedule any jobs which can now be run according to the proscribed algorithm
-        # This will do nothing if the model_type is "machine_learning"
         self.schedule()
 
         # update global clock to be the next submisison or ending event
         if self.future_jobs.empty() and self.running_jobs.empty():
             print("No future jobs and no running jobs!")
+            self.temp_out_file.close()
             return False
 
         first_submit = 1e100
@@ -222,24 +232,33 @@ class Scheduler():
         # and will schedule as many jobs as is currently possible using the proscribed algorithm
         # to schedule as many jobs as possible from the job queue and available machine resources.
 
+
+        # Prints for debugging algorithm
+        self.temp_out_file.write("="*40)
+        self.temp_out_file.write("\n")
+        self.temp_out_file.write(f"Job queue depth is: {len(self.job_queue)}\n")
+        for job in self.job_queue:
+            self.temp_out_file.write(f"{job.job_name}: req_duration={job.req_duration:8} req_mem={job.req_mem:<12} req_cpus={job.req_cpus:<4} req_gpus={job.req_gpus}\n")
+        for machine in self.machines:
+            self.temp_out_file.write(f"{machine.node_name:<29}: avail_mem={machine.avail_mem:<10} avail_cpus={machine.avail_cpus:<2} avail_gpus={machine.avail_gpus}\n")
+        
+
         if self.model_type == "sjf":
             self.job_queue.sort(key=lambda x: x.req_duration) # sjf = shortest job first by requested duration
-
             none_can_be_scheduled = False
             while not none_can_be_scheduled:
                 any_scheduled = False
                 for index, job in enumerate(self.job_queue):
-                    # scheduled, machine = self.shortest_job_first(job)
-
                     assigned_machine = None
                     for m in self.machines:
                         if (m.avail_mem >= job.req_mem) and (m.avail_cpus >= job.req_cpus) and (m.avail_gpus >= job.req_gpus):
                             assigned_machine = m
                             break
                     if assigned_machine is not None:
+                        self.temp_out_file.write(f"Starting job {job.job_name} on {assigned_machine.node_name}\n")
                         self.set_job_time(job)
                         assigned_machine.start_job(job)
-
+                        self.temp_out_file.write(f"{assigned_machine.node_name:<29}: avail_mem={assigned_machine.avail_mem:<10} avail_cpus={assigned_machine.avail_cpus:<2} avail_gpus={assigned_machine.avail_gpus}\n")
                         #self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
                         any_scheduled = True
                         self.running_jobs.put( (job.end_time, job) )
@@ -249,6 +268,47 @@ class Scheduler():
                         break
                 if not any_scheduled:
                     none_can_be_scheduled = True
+
+        elif self.model_type == "sjf_true":
+            # Schedule the first job in the queue until the first job in the queue can not be 
+            # scheduled, or the queue is empty.
+            self.job_queue.sort(key=lambda x: x.req_duration) # sjf = shortest job first by requested duration
+
+            while True:
+                if len(self.job_queue) == 0:
+                    return
+                job = self.job_queue[0]
+                assigned_machine = None
+                for m in self.machines:
+                    if (m.avail_mem >= job.req_mem) and (m.avail_cpus >= job.req_cpus) and (m.avail_gpus >= job.req_gpus):
+                        assigned_machine = m
+                        break
+
+                if assigned_machine is not None:
+                    self.temp_out_file.write(f"Starting job {job.job_name} on {assigned_machine.node_name}\n")
+                    self.set_job_time(job)
+                    assigned_machine.start_job(job)
+                    self.temp_out_file.write(f"{assigned_machine.node_name:<29}: avail_mem={assigned_machine.avail_mem:10} avail_cpus={assigned_machine.avail_cpus:<2} avail_gpus={assigned_machine.avail_gpus}\n")
+                    
+                    #self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+                    any_scheduled = True
+                    self.running_jobs.put( (job.end_time, job) )
+                    self.job_queue = self.job_queue[1:]
+                    #self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+                    self.machines_log_status()
+                else:
+                    # Need a check in here if a job is un-runnable on any HPC machine, or we will fail to terminate
+                    can_run_on_any_machine = False
+                    for m in self.machines:
+                        if (m.total_mem >= job.req_mem) and (m.total_cpus >= job.req_cpus) and (m.total_gpus >= job.req_gpus):
+                            can_run_on_any_machine = True
+                            break
+                    if not can_run_on_any_machine:
+                        self.job_queue = self.job_queue[1:]
+                        self.failed_jobs.append(job)
+                        #self.logger.info("{} is unrunnable on any machine in the cluster".format(job.job_name, self.global_clock))
+                        continue
+                    break
 
         elif self.model_type == "fcfs":
             # Schedule the first job in the queue until the first job in the queue can not be 
@@ -264,6 +324,9 @@ class Scheduler():
                         break
 
                 if assigned_machine is not None:
+                    self.temp_out_file.write(f"Starting job {job.job_name} on {assigned_machine.node_name}\n")
+                    self.temp_out_file.write(f"{assigned_machine.node_name:<29}: avail_mem={assigned_machine.avail_mem:10} avail_cpus={assigned_machine.avail_cpus:<2} avail_gpus={assigned_machine.avail_gpus}\n")
+                
                     self.set_job_time(job)
                     assigned_machine.start_job(job)
 
@@ -293,7 +356,6 @@ class Scheduler():
             while True:
                 if len(self.job_queue) == 0:
                     return
-
                 min_fill_margin = 10
                 assigned_machine = None
                 best_job_index = None
@@ -338,6 +400,9 @@ class Scheduler():
 
                 # Start running the best job on the best machine
                 if assigned_machine is not None and best_job_index is not None:
+                    self.temp_out_file.write(f"Starting job {job.job_name} on {assigned_machine.node_name}\n")
+                    self.temp_out_file.write(f"{assigned_machine.node_name:<29}: avail_mem={assigned_machine.avail_mem:10} avail_cpus={assigned_machine.avail_cpus:<2} avail_gpus={assigned_machine.avail_gpus}\n")
+                
                     job = self.job_queue[best_job_index]
                     self.set_job_time(job)
                     assigned_machine.start_job(job)
@@ -353,7 +418,63 @@ class Scheduler():
                     return
 
         elif self.model_type == "machine_learning":
-            return
+            if self.rl_model is None:
+                print("You must load the model!")
+                return
+            
+            while True:
+                if len(self.job_queue) == 0:
+                    self.temp_out_file.write("Queue Depth is 0, nothing to scheudule")
+                    return
+                
+                self.update_scheduable_jobs()
+                if len(self.schedulable_jobs) == 0:
+                    self.temp_out_file.write("No scheudule jobs")
+                    return
+
+                for index, job_index_job_tuple in enumerate(self.schedulable_jobs[:10]):
+                    job_index, job = job_index_job_tuple
+                    self.temp_out_file.write(f"{job.job_name}: req_duration={job.req_duration:8} req_mem={job.req_mem:<12} req_cpus={job.req_cpus:<4} req_gpus={job.req_gpus}\n")
+                
+                for machine in self.machines:
+                    self.temp_out_file.write(f"{machine.node_name:<29}: avail_mem={machine.avail_mem:<10} avail_cpus={machine.avail_cpus:<2} avail_gpus={machine.avail_gpus}\n")
+
+                obs = self.get_obs(QUEUE_DEPTH, True)
+                action_masks = self.get_action_mask(QUEUE_DEPTH)
+
+                action, _states = self.rl_model.predict(obs, action_masks=action_masks)
+                action = self.action_converter(action)
+                
+                job_index, machine_index = action
+                # Confirm this is a valid job index and machine index
+                if job_index > len(self.schedulable_jobs)-1 or machine_index > len(self.machines)-1:
+                    print("="*40)
+                    print(f"Action {action} appears to be invalid.")
+                    print(f"{len(self.job_queue)} jobs in the queue.")
+                    print(f"{len(self.machines)} machines in the cluster")
+                    return 
+
+                job_queue_index, job = self.schedulable_jobs[job_index]
+                assigned_machine = self.machines[machine_index]
+
+                # print(f"Trying to schedule {job}")
+                # print(f"on machine {assigned_machine}")
+
+                # Confirm this machine can actually run this job.  If not, do nothing
+                if not assigned_machine.can_run(job):
+                    print(f"{assigned_machine.node_name} lacks the resources to run {job.job_name}")
+                    return
+
+                # print(f"Starting {job} on {assigned_machine}")
+                assigned_machine.start_job(job)
+                self.set_job_time(job)
+                #self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+                self.running_jobs.put( (job.end_time, job) )
+                self.job_queue = self.job_queue[:job_queue_index] + self.job_queue[job_queue_index+1:]
+                #self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+                self.machines_log_status()
+                
+            
 
         elif self.model_type == "oracle":
             self.job_queue.sort(key=lambda x: x.actual_duration) # oracle = shortest job first by actual duration
@@ -370,6 +491,9 @@ class Scheduler():
                             assigned_machine = m
                             break
                     if assigned_machine is not None:
+                        self.temp_out_file.write(f"Starting job {job.job_name} on {assigned_machine.node_name}\n")
+                        self.temp_out_file.write(f"{assigned_machine.node_name:<29}: avail_mem={assigned_machine.avail_mem:10} avail_cpus={assigned_machine.avail_cpus:<2} avail_gpus={assigned_machine.avail_gpus}\n")
+                
                         self.set_job_time(job)
                         assigned_machine.start_job(job)
 
@@ -383,6 +507,48 @@ class Scheduler():
                 if not any_scheduled:
                     none_can_be_scheduled = True
 
+        elif self.model_type == "oracle_true":
+            # Schedule the first job in the queue until the first job in the queue can not be 
+            # scheduled, or the queue is empty.
+            self.job_queue.sort(key=lambda x: x.actual_duration) # sjf = shortest job first by requested duration
+            
+            while True:
+                if len(self.job_queue) == 0:
+                    return
+                job = self.job_queue[0]
+                assigned_machine = None
+                for m in self.machines:
+                    if (m.avail_mem >= job.req_mem) and (m.avail_cpus >= job.req_cpus) and (m.avail_gpus >= job.req_gpus):
+                        assigned_machine = m
+                        break
+
+                if assigned_machine is not None:
+                    self.temp_out_file.write(f"Starting job {job.job_name} on {assigned_machine.node_name}\n")
+                    self.temp_out_file.write(f"{assigned_machine.node_name:<29}: avail_mem={assigned_machine.avail_mem:10} avail_cpus={assigned_machine.avail_cpus:<2} avail_gpus={assigned_machine.avail_gpus}\n")
+                
+                    self.set_job_time(job)
+                    assigned_machine.start_job(job)
+
+                    #self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
+                    any_scheduled = True
+                    self.running_jobs.put( (job.end_time, job) )
+                    self.job_queue = self.job_queue[1:]
+                    #self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
+                    self.machines_log_status()
+                else:
+                    # Need a check in here if a job is un-runnable on any HPC machine, or we will fail to terminate
+                    can_run_on_any_machine = False
+                    for m in self.machines:
+                        if (m.total_mem >= job.req_mem) and (m.total_cpus >= job.req_cpus) and (m.total_gpus >= job.req_gpus):
+                            can_run_on_any_machine = True
+                            break
+                    if not can_run_on_any_machine:
+                        self.job_queue = self.job_queue[1:]
+                        self.failed_jobs.append(job)
+                        #self.logger.info("{} is unrunnable on any machine in the cluster".format(job.job_name, self.global_clock))
+                        continue
+                    break
+                
         else:
             print(f"Invalid model_type: {self.model_type}")
             return
@@ -413,7 +579,7 @@ class Scheduler():
             more_to_do = True
             return more_to_do
 
-        job__queue_index, job = self.schedulable_jobs[job_index]
+        job_queue_index, job = self.schedulable_jobs[job_index]
         assigned_machine = self.machines[machine_index]
 
         # print(f"Trying to schedule {job}")
@@ -430,7 +596,7 @@ class Scheduler():
         self.set_job_time(job)
         #self.logger.info("job {} started at time {}".format(job.job_name, self.global_clock))
         self.running_jobs.put( (job.end_time, job) )
-        self.job_queue = self.job_queue[:job__queue_index] + self.job_queue[job__queue_index+1:]
+        self.job_queue = self.job_queue[:job_queue_index] + self.job_queue[job_queue_index+1:]
         #self.log_training_data_csv(job, self.machines, assigned_machine.node_name, "Start")
         self.machines_log_status()
         self.update_scheduable_jobs()
@@ -555,10 +721,12 @@ class Scheduler():
                     self.schedulable_jobs.append( (job_index, job) )
                     break
         
-    def get_obs(self, queue_depth_to_look):
+    def get_obs(self, queue_depth_to_look, already_updated_schedulable=False):
         obs = []
 
-        self.update_scheduable_jobs()
+        if not already_updated_schedulable:
+            self.update_scheduable_jobs()
+
         # Only look so deep in the queue and pad if not enough jobs in the job queue
         for i in range(queue_depth_to_look):
             try:
