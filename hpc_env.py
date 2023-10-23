@@ -7,15 +7,14 @@ from scheduler import Scheduler
 import numpy as np
 from enum import Enum
 
-MACHINES_CSV = "./data/machines.csv"
+# MACHINES_CSV = "./data/machines.csv"
 # JOBS_CSV = "./data/low_util.csv"
-JOBS_CSV = "./data/500_jobs.csv"
+# JOBS_CSV = "./data/500_jobs.csv"
 
 # MACHINES_CSV = "./data/tiny_machines.csv"
 # JOBS_CSV = "./data/fcfs_test_jobs.csv"
 
 DEFAULT_QUEUE_DEPTH = 10
-METRIC_WINDOW_SIZE = 100
 
 # What percentage of jobs have a choice of machine on which they could be scheduled over time?
 
@@ -27,12 +26,20 @@ CURRENT_METRIC = Metrics.AVG_QUEUE_TIME
 # CURRENT_METRIC = Metrics.AVG_CLUSTER_UTILIZATION
 
 class HPCEnv(Env):
-    def __init__(self):
+    def __init__(self, machines_csv = None, jobs_csv = None):
         self.step_counter = 0
         self.scheduler = Scheduler("machine_learning")
-        self.scheduler.load_machines(MACHINES_CSV)
-        self.scheduler.load_jobs(JOBS_CSV)
+        self.MACHINES_CSV = machines_csv
+        self.JOBS_CSV = jobs_csv
+        if self.MACHINES_CSV is None or self.JOBS_CSV is None:
+            print("You must provide the machines_csv and the jobs_csv arguments")
+
+        self.scheduler.load_machines(machines_csv)
+        self.scheduler.load_jobs(jobs_csv)
         self.NUM_MACHINES = len(self.scheduler.machines)
+
+        
+
         # The number of jobs in the queue that are in the observation space
         # is either DEFAULT_QUEUE_DEPTH (defined above) or the number of 
         # submitted jobs, whichever is smaller.
@@ -68,9 +75,8 @@ class HPCEnv(Env):
         self.np_random = None
 
     def seed(self, seed):
-        # Thunk method is expecting this method to exist?
-        pass
-
+        np.random.seed(seed)
+        
     def step(self, action):
         self.step_counter += 1
         more_to_do = self.scheduler.rl_schedule(action)
@@ -91,8 +97,8 @@ class HPCEnv(Env):
         truncated = False
         info = {}
 
-        if self.step_counter % 400 == 0:
-            self.scheduler.print_info()
+        # if self.step_counter % 400 == 0:
+        #     self.scheduler.print_info()
 
         # ppo implementation expecting the following to be returned from step:
         # next_obs, reward, done, info
@@ -104,8 +110,8 @@ class HPCEnv(Env):
 
     def reset(self, seed=None, options={}):
         self.scheduler = Scheduler("machine_learning")
-        self.scheduler.load_machines(MACHINES_CSV)
-        self.scheduler.load_jobs(JOBS_CSV)
+        self.scheduler.load_machines(self.MACHINES_CSV)
+        self.scheduler.load_jobs(self.JOBS_CSV)
         self.NUM_MACHINES = len(self.scheduler.machines)
         self.step_counter = 0
 

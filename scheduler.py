@@ -93,7 +93,7 @@ class Scheduler():
         for line in lines[1:]:
             elements = line.split(",")
             self.machines.append(Machine(elements[0], *map(int, elements[1:])))
-        print(f"{len(self.machines)} machines loaded from {csv_file_name}")
+        # print(f"{len(self.machines)} machines loaded from {csv_file_name}")
 
     def load_jobs(self, csv_file_name):
         f = open(csv_file_name)
@@ -109,7 +109,7 @@ class Scheduler():
             self.future_jobs.put( (j.submission_time, j) )
         # initialize global clock to be the submission time of the first job
         self.global_clock = self.future_jobs.queue[0][0]
-        print(f"{len(self.future_jobs.queue)} jobs loaded from {csv_file_name}")
+        # print(f"{len(self.future_jobs.queue)} jobs loaded from {csv_file_name}")
         self.num_total_jobs = len(self.future_jobs.queue)
 
     def log_training_data_csv(self, job, machines, assignment, action):
@@ -242,7 +242,6 @@ class Scheduler():
         for machine in self.machines:
             self.temp_out_file.write(f"{machine.node_name:<29}: avail_mem={machine.avail_mem:<10} avail_cpus={machine.avail_cpus:<2} avail_gpus={machine.avail_gpus}\n")
         
-
         if self.model_type == "sjf":
             self.job_queue.sort(key=lambda x: x.req_duration) # sjf = shortest job first by requested duration
             none_can_be_scheduled = False
@@ -682,7 +681,7 @@ class Scheduler():
                     return more_to_do
 
             if self.future_jobs.empty() and self.running_jobs.empty() :
-                print("No future jobs, no running jobs!")
+                # print("No future jobs, no running jobs!")
                 self.update_scheduable_jobs()
                 return False
 
