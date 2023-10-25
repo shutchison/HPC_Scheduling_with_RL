@@ -38,7 +38,7 @@ class Scheduler():
 
         self.rl_model = None
 
-    def conduct_simulation(self, machines_csv, jobs_csv, model_to_load="ppo_mask"):
+    def conduct_simulation(self, machines_csv, jobs_csv, model_to_load="ppo_sb3_mask__1698091320"):
         self.load_machines(machines_csv)
         self.load_jobs(jobs_csv)
         print("Model is: {}".format(self.model_type))

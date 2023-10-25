@@ -102,7 +102,8 @@ model = MaskablePPO(MaskableActorCriticPolicy,
                     seed=args.seed
                     )
 
-tmp_path = f"./runs/{args.exp_name}__{int(time.time())}"
+experiment_name = f"{args.exp_name}_{args.jobs_csv.rstrip('.csv').lstrip('.')}_{args.num_training_steps}_{int(time.time())}"
+tmp_path = f"./runs/{experiment_name}"
 # set up logger
 new_logger = configure(tmp_path, ["stdout", "csv", "tensorboard"])
 
@@ -118,7 +119,10 @@ print("learning complete.  Time spent: {}".format(end_time-start_time))
 #print(thing)
 #print("done evaluating")
 
-# model.save("ppo_mask")
+jobs_csv_filename = os.path.splitext(os.path.split(args.jobs_csv)[1])[0]
+model_save_path = f"./saved_models/{jobs_csv_filename}_{args.num_training_steps}"
+model.save(model_save_path)
+print(f"model saved to {model_save_path}.zip")
 # del model # remove to demonstrate saving and loading
 # model = MaskablePPO.load("ppo_mask")
 # print("done saving and loading")
